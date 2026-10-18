@@ -24,8 +24,10 @@ table{border-collapse:collapse;min-width:1150px;width:100%}
 th{background:var(--ac2);font-size:13px;padding:8px 4px;position:sticky;top:0;border-bottom:1px solid var(--bd)}
 td{border-bottom:1px solid var(--bd);padding:2px}
 td.n{text-align:center;color:var(--mut);width:36px}
-td input{border:0;background:transparent;border-radius:4px;padding:8px 6px}
-td input:focus{background:var(--bg)}
+td select,td input{border:0;background:transparent;border-radius:4px;padding:8px 6px}
+td select{border:0;background:transparent;color:var(--tx);font:inherit;padding:8px 6px;width:100%;min-width:190px;border-radius:4px}
+td select option{background:var(--card);color:var(--tx)}
+td input:focus,td select:focus{background:var(--bg)}
 .hint{font-size:12px;color:var(--mut);margin:10px 2px}
 </style>
 </head>
@@ -114,14 +116,29 @@ async function loadDay(){
 }
 
 // ---- table ----
+function nameCell(i,r){
+  const cur=(r.n||"").trim(),set=new Set(Object.keys(drivers));if(cur)set.add(cur);
+  const esc=x=>x.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+  const opts=[...set].sort((a,b)=>a.localeCompare(b,"ar")).map(n=>`<option value="${esc(n)}"${n===cur?" selected":""}>${esc(n)}</option>`).join("");
+  return `<td><select data-i="${i}" data-k="n"><option value=""${cur?"":" selected"}>— اختر السائق —</option>${opts}<option value="__new__">＋ سائق جديد…</option></select></td>`;
+}
 function render(){
   $("head").innerHTML="<th>#</th>"+COLS.map(c=>`<th>${c[1]}</th>`).join("");
-  $("body").innerHTML=rows.map((r,i)=>`<tr><td class="n">${i+1}</td>`+COLS.map(([k,,t])=>
+  $("body").innerHTML=rows.map((r,i)=>`<tr><td class="n">${i+1}</td>`+COLS.map(([k,,t])=>k==="n"?nameCell(i,r):
     `<td><input data-i="${i}" data-k="${k}" type="${t==="time"?"time":"text"}" ${k==="n"?'list="names"':""} ${t==="tel"?'inputmode="tel"':""} value="${(r[k]||"").replace(/"/g,"&quot;")}"></td>`).join("")+"</tr>").join("");
 }
 $("body").addEventListener("input",e=>{
   const el=e.target; if(!el.dataset.k)return;
-  const i=+el.dataset.i,k=el.dataset.k; rows[i][k]=el.value;
+  const i=+el.dataset.i,k=el.dataset.k;
+  if(el.tagName==="SELECT"&&el.value==="__new__"){
+    const nm=(prompt("اسم السائق الجديد:")||"").trim();
+    if(!nm){el.value=rows[i].n||"";return}
+    if(!drivers[nm])drivers[nm]={p:"",c:"",m:""};
+    el.value="";rows[i].n=nm;
+    const d=drivers[nm];AUTO.forEach(a=>{rows[i][a]=d[a]||""});
+    render();queueSave();return;
+  }
+  rows[i][k]=el.value;
   if(k==="n"){
     const d=drivers[el.value.trim()];
     if(d){AUTO.forEach(a=>{rows[i][a]=d[a]||"";const f=document.querySelector(`input[data-i="${i}"][data-k="${a}"]`);if(f)f.value=rows[i][a]})}
