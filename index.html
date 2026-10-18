@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>سجل السائقين</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f5f3ee;--card:#fff;--tx:#1f2a2e;--mut:#6b777b;--ac:#0f6b5c;--ac2:#e3f1ee;--bd:#d9d6cd}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171c1e;--card:#20272a;--tx:#e8eceb;--mut:#9aa7aa;--ac:#4fc3ae;--ac2:#1d3a35;--bd:#35403f}}
+:root[data-theme="dark"]{--bg:#171c1e;--card:#20272a;--tx:#e8eceb;--mut:#9aa7aa;--ac:#4fc3ae;--ac2:#1d3a35;--bd:#35403f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI",Tahoma,Arial,sans-serif;padding:16px}
+h1{margin:0 0 12px;font-size:22px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+label{font-size:13px;color:var(--mut)}
+input{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:7px 8px;width:100%;box-sizing:border-box}
+input:focus{outline:2px solid var(--ac);border-color:transparent}
+.bar input{width:auto}
+button{font:inherit;cursor:pointer;border:1px solid var(--ac);background:var(--ac);color:#fff;border-radius:8px;padding:8px 14px}
+button.sec{background:transparent;color:var(--ac)}
+#st{font-size:13px;color:var(--mut);margin-inline-start:auto}
+.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--bd);border-radius:12px}
+table{border-collapse:collapse;min-width:1150px;width:100%}
+th{background:var(--ac2);font-size:13px;padding:8px 4px;position:sticky;top:0;border-bottom:1px solid var(--bd)}
+td{border-bottom:1px solid var(--bd);padding:2px}
+td.n{text-align:center;color:var(--mut);width:36px}
+td input{border:0;background:transparent;border-radius:4px;padding:8px 6px}
+td input:focus{background:var(--bg)}
+.hint{font-size:12px;color:var(--mut);margin:10px 2px}
+</style>
+</head>
+<body>
+<h1>🚗 سجل السائقين</h1>
+<div class="bar">
+  <label>التاريخ <input type="date" id="date"></label>
+  <button class="sec" id="prev">اليوم السابق</button>
+  <button class="sec" id="next">اليوم التالي</button>
+  <label>اسم المركز (للـ PDF) <input type="text" id="center" placeholder="اتركه فارغاً" style="width:170px"></label>
+  <button id="pdf">تحميل PDF</button>
+  <span id="st"></span>
+</div>
+<div class="wrap"><table>
+<thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
+<p class="hint">اكتب اسم السائق: إذا كان محفوظاً من قبل (في أي يوم) تُعبّأ الهاتف ورقم السيارة والموديل تلقائياً، ويمكنك تعديل أي خانة وتُحفظ التعديلات تلقائياً.</p>
+<datalist id="names"></datalist>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+const COLS=[["n","اسم السائق","text"],["p","رقم الهاتف","tel"],["c","رقم السيارة","text"],["m","الموديل","text"],["o1","عداد الانطلاق","text"],["o2","عداد العودة","text"],["t1","وقت الانطلاق","time"],["t2","وقت العودة","time"],["r","رقم الوصل","text"],["s","اسم الباحث","text"]];
+const ROWS=30, AUTO=["p","c","m"];
+let rows=blank(), drivers={"خالد علي محمود سحويل":{p:"798540549",c:"50/32904",m:"2025"},"بسام محمد محمد خشان":{p:"788707591",c:"50/75042",m:"2019"},"عامر جمعة ابراهيم":{p:"787053646",c:"50/71167",m:"2018"}};
+let db=null, timer=null, loadTok=0;
+const $=id=>document.getElementById(id);
+function blank(){return Array.from({length:ROWS},()=>({}))}
+function today(){const d=new Date();return new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10)}
+function status(t){$("st").textContent=t}
+
+// ---- storage: Firebase Realtime Database ----
+// ===== ضع هنا إعدادات مشروع Firebase الخاص بك =====
+const firebaseConfig = {
+  apiKey: "AIzaSyDYGMIBpoPGeLVCSRtpnMFPXqNjaOkhRG0",
+  databaseURL: "https://drivar-a96d7-default-rtdb.firebaseio.com",
+  authDomain: "drivar-a96d7.firebaseapp.com",
+  projectId: "drivar-a96d7",
+  storageBucket: "drivar-a96d7.firebasestorage.app",
+  messagingSenderId: "724935133583",
+  appId: "1:724935133583:web:e8ad6b3c614bc1ce0b63fa"
+};
+// ====================================================
+const CONFIGURED=!firebaseConfig.apiKey.startsWith("YOUR");
+let lastErr="";
+if(CONFIGURED){try{firebase.initializeApp(firebaseConfig);db=firebase.database()}catch(e){lastErr="تعذّر تهيئة Firebase: "+(e.message||e)}}
+async function dbGet(path){
+  lastErr="";
+  if(!db)return null;
+  try{const s=await db.ref(path).get();return s.exists()?s.val():null}
+  catch(e){lastErr="تعذّر التحميل: "+(e.message||e);return null}
+}
+async function dbSet(path,ls,data){
+  if(!db)return;
+  await db.ref(path).set(data);
+  if(path.startsWith("days/"))await db.ref("meta/drivers").set({list:JSON.stringify(drivers)});
+}
+async function loadDrivers(){
+  const d=await dbGet("meta/drivers");
+  if(d&&d.list){try{Object.assign(drivers,JSON.parse(d.list))}catch(e){}}
+  refreshNames();
+}
+function refreshNames(){$("names").innerHTML=Object.keys(drivers).map(n=>`<option value="${n.replace(/"/g,"&quot;")}">`).join("")}
+let pending=null;
+async function saveDay(){
+  if(!pending)return;
+  const {date,data}=pending; pending=null;
+  try{
+    await dbSet("days/"+date,"",{rows:data});
+    status("✓ تم الحفظ")
+  }catch(e){status("تعذّر الحفظ: "+(e.message||e))}
+}
+function queueSave(){
+  const date=$("date").value; if(!date)return;
+  pending={date,data:JSON.stringify(rows)};
+  status("جارٍ الحفظ…");clearTimeout(timer);timer=setTimeout(saveDay,600)
+}
+async function changeDate(){clearTimeout(timer);await saveDay();loadDay()}
+async function loadDay(){
+  const tok=++loadTok; status("جارٍ التحميل…");
+  const date=$("date").value;
+  const d=await dbGet("days/"+date);
+  if(tok!==loadTok)return;
+  rows=blank();
+  if(d&&d.rows){try{JSON.parse(d.rows).forEach((r,i)=>{if(i<ROWS)rows[i]=r||{}})}catch(e){}}
+  render(); status(lastErr);
+}
+
+// ---- table ----
+function render(){
+  $("head").innerHTML="<th>#</th>"+COLS.map(c=>`<th>${c[1]}</th>`).join("");
+  $("body").innerHTML=rows.map((r,i)=>`<tr><td class="n">${i+1}</td>`+COLS.map(([k,,t])=>
+    `<td><input data-i="${i}" data-k="${k}" type="${t==="time"?"time":"text"}" ${k==="n"?'list="names"':""} ${t==="tel"?'inputmode="tel"':""} value="${(r[k]||"").replace(/"/g,"&quot;")}"></td>`).join("")+"</tr>").join("");
+}
+$("body").addEventListener("input",e=>{
+  const el=e.target; if(!el.dataset.k)return;
+  const i=+el.dataset.i,k=el.dataset.k; rows[i][k]=el.value;
+  if(k==="n"){
+    const d=drivers[el.value.trim()];
+    if(d){AUTO.forEach(a=>{rows[i][a]=d[a]||"";const f=document.querySelector(`input[data-i="${i}"][data-k="${a}"]`);if(f)f.value=rows[i][a]})}
+  }
+  const nm=(rows[i].n||"").trim();
+  if(nm&&AUTO.includes(k)||nm&&k==="n"){drivers[nm]=Object.assign({},drivers[nm],{p:rows[i].p||"",c:rows[i].c||"",m:rows[i].m||""});refreshNames()}
+  queueSave();
+});
+function shift(n){const d=new Date($("date").value||today());d.setDate(d.getDate()+n);$("date").value=d.toISOString().slice(0,10);changeDate()}
+$("prev").onclick=()=>shift(-1);$("next").onclick=()=>shift(1);$("date").onchange=changeDate;
+
+// ---- PDF (table drawn on canvas -> JPEG -> minimal PDF, keeps Arabic shaping correct) ----
+function drawCanvas(){
+  const W=2400,H=1697,c=document.createElement("canvas");c.width=W;c.height=H;
+  const g=c.getContext("2d");g.direction="rtl";g.textAlign="center";g.textBaseline="middle";
+  g.fillStyle="#fff";g.fillRect(0,0,W,H);g.fillStyle="#000";g.strokeStyle="#000";g.lineWidth=2;
+  g.font="bold 44px Tahoma,Arial,sans-serif";g.fillText("سجل السائقين",W/2,48);
+  const dv=$("date").value,day=new Date(dv+"T00:00:00").toLocaleDateString("ar",{weekday:"long"});
+  g.font="bold 32px Tahoma,Arial,sans-serif";g.textAlign="right";
+  g.fillText("اليوم: "+day+"      التاريخ: "+dv,W-30,130);
+  g.fillText("اسم المركز:",1330,130);
+  g.lineWidth=2;g.beginPath();g.moveTo(1300,148);g.lineTo(330,148);g.stroke();
+  const cn=$("center").value.trim();
+  if(cn){g.textAlign="center";g.fillText(cn,815,130,950)}
+  g.textAlign="center";
+  const w=[70,330,200,190,130,170,170,150,150,160,280],hd=["الرقم (ID)",...COLS.map(c=>c[1])];
+  const top=180,rh=(H-top-20)/(ROWS+1),tw=w.reduce((a,b)=>a+b,0),x0=W-30;
+  const sc=(W-60)/tw;
+  for(let r=0;r<=ROWS;r++){
+    let x=x0;
+    for(let j=0;j<w.length;j++){
+      const cw=w[j]*sc,y=top+r*rh;
+      if(r===0){g.fillStyle="#e6e6e6";g.fillRect(x-cw,y,cw,rh);g.fillStyle="#000"}
+      g.strokeRect(x-cw,y,cw,rh);
+      let t=r===0?hd[j]:(j===0?String(r):(rows[r-1][COLS[j-1][0]]||""));
+      g.font=(r===0?"bold 26px":"26px")+" Tahoma,Arial,sans-serif";
+      g.fillText(t,x-cw/2,y+rh/2,cw-8);
+      x-=cw;
+    }
+  }
+  return c;
+}
+function makePdf(jpg,pw,ph){
+  const enc=new TextEncoder(),parts=[],off=[];let len=0;
+  const add=b=>{if(typeof b==="string")b=enc.encode(b);parts.push(b);len+=b.length};
+  const obj=(n,body)=>{off[n]=len;add(n+" 0 obj\n");add(body);add("\nendobj\n")};
+  add("%PDF-1.4\n");
+  obj(1,"<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  off[4]=len;add(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${pw} /Height ${ph} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);add(jpg);add("\nendstream\nendobj\n");
+  const cs="q 842 0 0 595 0 0 cm /Im0 Do Q";
+  obj(5,`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`);
+  const xr=len;let x="xref\n0 6\n0000000000 65535 f \n";
+  for(let i=1;i<=5;i++)x+=String(off[i]).padStart(10,"0")+" 00000 n \n";
+  add(x+`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xr}\n%%EOF`);
+  return new Blob(parts,{type:"application/pdf"});
+}
+$("pdf").onclick=async()=>{
+  const c=drawCanvas(),b64=c.toDataURL("image/jpeg",0.92).split(",")[1],bin=atob(b64),jpg=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)jpg[i]=bin.charCodeAt(i);
+  const blob=makePdf(jpg,c.width,c.height),name="سجل_السائقين_"+$("date").value+".pdf";
+  try{
+    
+  }catch(e){if(e&&e.code==="declined")return}
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
+};
+
+// ---- start ----
+$("date").value=today();render();
+(async()=>{
+  await loadDrivers();await loadDay();if(!CONFIGURED)status("⚠ لم تُضبط إعدادات Firebase بعد");
+})();
+</script>
+</body>
+</html>
