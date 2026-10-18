@@ -28,6 +28,11 @@ td select,td input{border:0;background:transparent;border-radius:4px;padding:8px
 td select{border:0;background:transparent;color:var(--tx);font:inherit;padding:8px 6px;width:100%;min-width:190px;border-radius:4px}
 td select option{background:var(--card);color:var(--tx)}
 td input:focus,td select:focus{background:var(--bg)}
+dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx);padding:16px;width:min(520px,92vw);max-height:80vh}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dr{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)}
+.dr span{flex:1}.dr small{color:var(--mut);display:block}
+button.del{background:#b3261e;border-color:#b3261e;padding:5px 12px}
 .hint{font-size:12px;color:var(--mut);margin:10px 2px}
 </style>
 </head>
@@ -38,12 +43,15 @@ td input:focus,td select:focus{background:var(--bg)}
   <button class="sec" id="prev">اليوم السابق</button>
   <button class="sec" id="next">اليوم التالي</button>
   <label>اسم المركز (للـ PDF) <input type="text" id="center" placeholder="اتركه فارغاً" style="width:170px"></label>
+  <button class="sec" id="mgr">إدارة السائقين</button>
   <button id="pdf">تحميل PDF</button>
   <span id="st"></span>
 </div>
 <div class="wrap"><table>
 <thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
 <p class="hint">اكتب اسم السائق: إذا كان محفوظاً من قبل (في أي يوم) تُعبّأ الهاتف ورقم السيارة والموديل تلقائياً، ويمكنك تعديل أي خانة وتُحفظ التعديلات تلقائياً.</p>
+<dialog id="dlg"><h3 style="margin-top:0">إدارة السائقين</h3><div id="dlist"></div>
+<div style="text-align:left;margin-top:12px"><button class="sec" id="dclose">إغلاق</button></div></dialog>
 <datalist id="names"></datalist>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -86,7 +94,7 @@ async function dbSet(path,ls,data){
 }
 async function loadDrivers(){
   const d=await dbGet("meta/drivers");
-  if(d&&d.list){try{Object.assign(drivers,JSON.parse(d.list))}catch(e){}}
+  if(d&&d.list){try{drivers=JSON.parse(d.list)}catch(e){}}
   refreshNames();
 }
 function refreshNames(){$("names").innerHTML=Object.keys(drivers).map(n=>`<option value="${n.replace(/"/g,"&quot;")}">`).join("")}
@@ -144,7 +152,7 @@ $("body").addEventListener("input",e=>{
     if(d){AUTO.forEach(a=>{rows[i][a]=d[a]||"";const f=document.querySelector(`input[data-i="${i}"][data-k="${a}"]`);if(f)f.value=rows[i][a]})}
   }
   const nm=(rows[i].n||"").trim();
-  if(nm&&AUTO.includes(k)||nm&&k==="n"){drivers[nm]=Object.assign({},drivers[nm],{p:rows[i].p||"",c:rows[i].c||"",m:rows[i].m||""});refreshNames()}
+  if(nm&&drivers[nm]&&(AUTO.includes(k)||k==="n")){drivers[nm]=Object.assign({},drivers[nm],{p:rows[i].p||"",c:rows[i].c||"",m:rows[i].m||""});refreshNames()}
   queueSave();
 });
 function shift(n){const d=new Date($("date").value||today());d.setDate(d.getDate()+n);$("date").value=d.toISOString().slice(0,10);changeDate()}
@@ -206,6 +214,25 @@ $("pdf").onclick=async()=>{
   }catch(e){if(e&&e.code==="declined")return}
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
 };
+
+// ---- manage drivers ----
+function drawDrivers(){
+  const names=Object.keys(drivers).sort((a,b)=>a.localeCompare(b,"ar"));
+  const esc=x=>String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  $("dlist").innerHTML=names.length?names.map((n,i)=>`<div class="dr"><span>${esc(n)}<small>${esc([drivers[n].p,drivers[n].c,drivers[n].m].filter(Boolean).join(" · "))}</small></span><button class="del" data-i="${i}">حذف</button></div>`).join(""):"<p>لا يوجد سائقون.</p>";
+  $("dlist").dataset.names=JSON.stringify(names);
+}
+$("mgr").onclick=()=>{drawDrivers();$("dlg").showModal()};
+$("dclose").onclick=()=>$("dlg").close();
+$("dlist").addEventListener("click",async e=>{
+  const b=e.target.closest("button.del"); if(!b)return;
+  const name=JSON.parse($("dlist").dataset.names)[+b.dataset.i];
+  if(!confirm("حذف السائق «"+name+"» من القائمة؟\nلن تتأثر السجلات المحفوظة سابقاً."))return;
+  delete drivers[name];
+  drawDrivers();render();status("جارٍ الحفظ…");
+  try{await dbSet("meta/drivers","",{list:JSON.stringify(drivers)});status("✓ تم الحفظ")}
+  catch(err){status("تعذّر الحفظ: "+(err.message||err))}
+});
 
 // ---- start ----
 $("date").value=today();render();
