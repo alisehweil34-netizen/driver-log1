@@ -31,7 +31,8 @@ td input:focus,td select:focus{background:var(--bg)}
 dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx);padding:16px;width:min(520px,92vw);max-height:80vh}
 dialog::backdrop{background:rgba(0,0,0,.45)}
 .dr{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)}
-.dr span{flex:1}.dr small{color:var(--mut);display:block}
+.dr span{flex:1}.dr.ed{flex-wrap:wrap}.dr input{width:auto;flex:1 1 130px}
+.dr small{color:var(--mut);display:block}
 button.del{background:#b3261e;border-color:#b3261e;padding:5px 12px}
 .hint{font-size:12px;color:var(--mut);margin:10px 2px}
 </style>
@@ -216,22 +217,45 @@ $("pdf").onclick=async()=>{
 };
 
 // ---- manage drivers ----
+let editIdx=-1,dnames=[];
+const esc=x=>String(x).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 function drawDrivers(){
-  const names=Object.keys(drivers).sort((a,b)=>a.localeCompare(b,"ar"));
-  const esc=x=>String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;");
-  $("dlist").innerHTML=names.length?names.map((n,i)=>`<div class="dr"><span>${esc(n)}<small>${esc([drivers[n].p,drivers[n].c,drivers[n].m].filter(Boolean).join(" · "))}</small></span><button class="del" data-i="${i}">حذف</button></div>`).join(""):"<p>لا يوجد سائقون.</p>";
-  $("dlist").dataset.names=JSON.stringify(names);
+  dnames=Object.keys(drivers).sort((a,b)=>a.localeCompare(b,"ar"));
+  $("dlist").innerHTML=dnames.length?dnames.map((n,i)=>{
+    const d=drivers[n];
+    if(i===editIdx)return `<div class="dr ed"><input id="en" placeholder="الاسم" value="${esc(n)}"><input id="ep" placeholder="الهاتف" value="${esc(d.p||"")}"><input id="ec" placeholder="رقم السيارة" value="${esc(d.c||"")}"><input id="em" placeholder="الموديل" value="${esc(d.m||"")}"><button data-act="save">حفظ</button><button class="sec" data-act="cancel">إلغاء</button></div>`;
+    return `<div class="dr"><span>${esc(n)}<small>${esc([d.p,d.c,d.m].filter(Boolean).join(" · "))}</small></span><button class="sec" data-act="edit" data-i="${i}">تعديل</button><button class="del" data-act="del" data-i="${i}">حذف</button></div>`;
+  }).join(""):"<p>لا يوجد سائقون.</p>";
 }
-$("mgr").onclick=()=>{drawDrivers();$("dlg").showModal()};
-$("dclose").onclick=()=>$("dlg").close();
-$("dlist").addEventListener("click",async e=>{
-  const b=e.target.closest("button.del"); if(!b)return;
-  const name=JSON.parse($("dlist").dataset.names)[+b.dataset.i];
-  if(!confirm("حذف السائق «"+name+"» من القائمة؟\nلن تتأثر السجلات المحفوظة سابقاً."))return;
-  delete drivers[name];
-  drawDrivers();render();status("جارٍ الحفظ…");
+async function persistDrivers(){
+  status("جارٍ الحفظ…");
   try{await dbSet("meta/drivers","",{list:JSON.stringify(drivers)});status("✓ تم الحفظ")}
   catch(err){status("تعذّر الحفظ: "+(err.message||err))}
+}
+$("mgr").onclick=()=>{editIdx=-1;drawDrivers();$("dlg").showModal()};
+$("dclose").onclick=()=>$("dlg").close();
+$("dlist").addEventListener("click",async e=>{
+  const b=e.target.closest("button[data-act]"); if(!b)return;
+  const act=b.dataset.act,i=+b.dataset.i;
+  if(act==="edit"){editIdx=i;drawDrivers();return}
+  if(act==="cancel"){editIdx=-1;drawDrivers();return}
+  if(act==="del"){
+    const name=dnames[i];
+    if(!confirm("حذف السائق «"+name+"» من القائمة؟\nلن تتأثر السجلات المحفوظة سابقاً."))return;
+    delete drivers[name];drawDrivers();render();await persistDrivers();return;
+  }
+  if(act==="save"){
+    const old=dnames[editIdx],nn=$("en").value.trim();
+    if(!nn){alert("اكتب اسم السائق");return}
+    if(nn!==old&&drivers[nn]){alert("يوجد سائق بهذا الاسم");return}
+    const d={p:$("ep").value.trim(),c:$("ec").value.trim(),m:$("em").value.trim()};
+    delete drivers[old];drivers[nn]=d;
+    let changed=false;
+    if(nn!==old)rows.forEach(r=>{if((r.n||"").trim()===old){r.n=nn;changed=true}});
+    editIdx=-1;drawDrivers();render();
+    await persistDrivers();
+    if(changed)queueSave();
+  }
 });
 
 // ---- start ----
